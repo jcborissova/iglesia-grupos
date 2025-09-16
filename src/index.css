@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+/* Sortable tokens (sin espacios) */
+@layer utilities {
+  .is-ghost    { @apply opacity-50; }
+  .is-chosen   { @apply ring-2 ring-slate-300; }
+  .is-dragging { @apply shadow-lg; }
+}
