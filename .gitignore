@@ -3,3 +3,5 @@ dist
 .env
 .env.*
 .DS_Store
+.env
+.env.* # ya lo tienes, pero por si acaso
