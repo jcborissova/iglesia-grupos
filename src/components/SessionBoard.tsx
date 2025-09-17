@@ -2,13 +2,13 @@
 // src/components/SessionBoard.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-// Requiere: npm i sortablejs
+// Requiere: npm i sortablejs file-saver jspdf
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Sortable from 'sortablejs';
 import { Api, type Person, type Session, type GroupDetail } from '../api';
 import { Modal, TextField, PrimaryButton, GhostButton, Spinner } from '../ui/primitives';
 import { jsPDF } from 'jspdf';
-
+import { saveAs } from 'file-saver';
 
 /* ---------- Helpers ---------- */
 
@@ -16,6 +16,21 @@ function uid() {
   const g: any = globalThis as any;
   if (g.crypto?.randomUUID) return g.crypto.randomUUID();
   return 'g_' + Math.random().toString(36).slice(2, 10);
+}
+
+/** Normaliza texto seguro para mostrar */
+function toSafeText(v: unknown, fb = 'Session'): string {
+  return (v ?? fb).toString().trim().replace(/\s+/g, ' ');
+}
+
+/** Slug seguro para filename */
+function toSlug(v: string): string {
+  return v
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9 _-]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
 }
 
 /** Barajar y repartir equitativamente */
@@ -38,130 +53,219 @@ function generateBalancedGroups(people: Person[], count: number) {
 
 type ExportGroup = { group_name: string; members: string[] };
 
+/* ---------- Export PDF (bonito, 3 columnas, mobile-friendly) ---------- */
+
 function exportGroupsToPDF({
   sessionName,
   groups,
 }: {
   sessionName: unknown;
-  groups: { group_name: string; members: string[] }[];
+  groups: ExportGroup[];
 }) {
-  const toSafeText = (v: unknown, fb = 'Sessio') => (v ?? fb).toString().trim();
-  const toSlug = (v: string) =>
-    v.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '_');
-
   const safeSession = toSafeText(sessionName, 'Session');
   const fileBase = toSlug(`Groups_${safeSession}`);
 
   const doc = new jsPDF({ unit: 'pt', format: 'letter' }); // 612x792 pt aprox
-  const marginX = 48;
-  const marginY = 60;
-  const innerW = doc.internal.pageSize.getWidth() - marginX * 2;
-  const innerH = doc.internal.pageSize.getHeight() - marginY * 2;
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
 
-  // Config de columnas
-  const COLS = 2;
-  const GUTTER = 18;
+  // Márgenes
+  const marginX = 40;
+  const marginY = 56;
+
+  // Área útil
+  const innerW = pageW - marginX * 2;
+  const innerH = pageH - marginY * 2;
+
+  // Layout columnas
+  const COLS = 3;
+  const GUTTER = 14;
   const colW = (innerW - GUTTER * (COLS - 1)) / COLS;
-  const topY = marginY + 42; // debajo del encabezado
+
+  // Estilos
+  const headerBarH = 26;
+  const titleFont = { family: 'helvetica' as const, size: 16 };
+  const metaFont = { family: 'helvetica' as const, size: 10 };
+  const groupTitleFont = { family: 'helvetica' as const, size: 12 };
+  const itemFont = { family: 'helvetica' as const, size: 10 };
+  const cardPad = 8;
+  const lineGap = 4;
+  const sectionGap = 10;
+  const cardRadius = 6;
+
+  // Encabezado con barra de color
+  doc.setFillColor(30, 64, 175); // azul
+  doc.rect(0, 0, pageW, headerBarH, 'F');
+
+  doc.setFont(titleFont.family, 'bold');
+  doc.setFontSize(titleFont.size);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`Sesión: ${safeSession}`, marginX, headerBarH / 2 + 4, { baseline: 'middle' });
+
+  doc.setFont(metaFont.family, 'normal');
+  doc.setFontSize(metaFont.size);
+  doc.setTextColor(230, 230, 230);
+  doc.text(`Exportado: ${new Date().toLocaleString()}`, pageW - marginX, headerBarH / 2 + 4, {
+    align: 'right',
+    baseline: 'middle',
+  });
+
+  // Posición inicial (debajo del encabezado visual)
+  const topY = marginY;
   const bottomY = marginY + innerH;
 
-  // Encabezado
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text(`Sesión: ${safeSession}`, marginX, marginY);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  doc.text(`Exportado: ${new Date().toLocaleString()}`, marginX, marginY + 18);
-
-  // Tipografías para el contenido
-  const titleFontSize = 12;
-  const itemFontSize = 11;
-  const titleGap = 6; // espacio bajo el título
-  const lineGap = 4;  // espacio entre líneas
-  const sectionGap = 10; // espacio entre grupos
-
-  // Estado de layout
   let col = 0;
   let x = marginX;
   let y = topY;
 
-  // Helpers
   const goNextColumn = () => {
     col++;
     x = marginX + col * (colW + GUTTER);
     y = topY;
-  };
-
-  const ensureFits = (needed: number) => {
-    // Si no cabe en la columna actual, pasa a la siguiente
-    if (y + needed > bottomY) goNextColumn();
-  };
-
-  // Pintar cada grupo en columnas
-  groups.forEach((g) => {
-    const title = toSafeText(g.group_name, 'Group');
-    const members = (g.members ?? []).map((m) => (m == null || m === '' ? '—' : String(m)));
-
-    // Estimar alto necesario: título + (líneas por miembro)
-    // Altura aproximada por línea ≈ itemFontSize + lineGap
-    const titleH = titleFontSize + titleGap;
-    const lineH = itemFontSize + lineGap;
-    const blockH = titleH + Math.max(1, members.length) * lineH + sectionGap;
-
-    ensureFits(blockH);
-
-    // Si ya no hay más columnas disponibles en la página (COLS fijas) y no cabe,
-    // reducimos font (fallback). *Opcional*: puedes omitir este bloque si prefieres saltar de página.
     if (col >= COLS) {
-      // fallback agresivo: reduce tamaño para forzarlo (último recurso)
-      // (Puedes ajustar valores mínimos a tu gusto)
-      doc.setFontSize(10);
+      // Nueva página si se acaban las columnas
+      doc.addPage();
+      // Repetir encabezado en cada página
+      doc.setFillColor(30, 64, 175);
+      doc.rect(0, 0, pageW, headerBarH, 'F');
+      doc.setFont(titleFont.family, 'bold');
+      doc.setFontSize(titleFont.size);
+      doc.setTextColor(255, 255, 255);
+      doc.text(`Sesión: ${safeSession}`, marginX, headerBarH / 2 + 4, { baseline: 'middle' });
+      doc.setFont(metaFont.family, 'normal');
+      doc.setFontSize(metaFont.size);
+      doc.setTextColor(230, 230, 230);
+      doc.text(`Exportado: ${new Date().toLocaleString()}`, pageW - marginX, headerBarH / 2 + 4, {
+        align: 'right',
+        baseline: 'middle',
+      });
+      col = 0;
+      x = marginX;
+      y = topY;
+    }
+  };
+
+  /** Envuelve texto para un ancho */
+  const wrap = (text: string, width: number) => {
+    return doc.splitTextToSize(text, width);
+  };
+
+  /** Calcula alto de una "tarjeta" de grupo */
+  function measureCardHeight(title: string, members: string[]) {
+    // Título
+    const titleLines = wrap(title, colW - cardPad * 2);
+    const titleH = groupTitleFont.size + lineGap + (titleLines.length - 1) * (groupTitleFont.size + 2);
+
+    // Ítems
+    let itemsH = 0;
+    members.forEach((m, i) => {
+      const line = `${i + 1}. ${m || '—'}`;
+      const lines = wrap(line, colW - cardPad * 2);
+      itemsH += itemFont.size + (lines.length - 1) * (itemFont.size + 2) + lineGap;
+    });
+    if (members.length === 0) {
+      const lines = wrap('—', colW - cardPad * 2);
+      itemsH += itemFont.size + (lines.length - 1) * (itemFont.size + 2) + lineGap;
     }
 
-    // Título del grupo
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(titleFontSize);
-    doc.text(`${title}`, x, y);
-    y += titleH;
+    const cardH = cardPad + titleH + 4 + itemsH + cardPad;
+    return cardH;
+  }
 
-    // Miembros numerados
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(itemFontSize);
-    members.forEach((name, i) => {
-      // Si esta línea no cabe, pasa de columna
-      if (y + lineH > bottomY) {
-        goNextColumn();
-        // Si agotamos columnas, seguimos en la última (o podrías cambiar a nueva página)
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(itemFontSize);
-        // Repite el título para continuidad visual (opcional)
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(titleFontSize);
-        doc.text(`Group: ${title} (cont.)`, x, y);
-        y += titleH;
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(itemFontSize);
-      }
-      doc.text(`${i + 1}. ${name}`, x, y);
-      y += lineH;
+  /** Dibuja una tarjeta de grupo en (x, y). Devuelve alto usado. */
+  function drawGroupCard(title: string, members: string[]) {
+    const cardH = measureCardHeight(title, members);
+
+    // Si no cabe, pasar a la siguiente columna/página
+    if (y + cardH > bottomY) {
+      goNextColumn();
+    }
+
+    // Sombra suave (simulada)
+    doc.setDrawColor(0, 0, 0);
+    doc.setFillColor(245, 247, 250); // fondo claro
+    doc.setTextColor(33, 37, 41);
+    doc.roundedRect(x, y, colW, cardH, cardRadius, cardRadius, 'F');
+
+    // Línea decorativa izquierda
+    doc.setFillColor(30, 64, 175);
+    doc.rect(x, y, 4, cardH, 'F');
+
+    // Título
+    const titleLines = wrap(title, colW - cardPad * 2);
+    let cursorY = y + cardPad + groupTitleFont.size;
+    doc.setFont(groupTitleFont.family, 'bold');
+    doc.setFontSize(groupTitleFont.size);
+    titleLines.forEach((t: string | string[], idx: number) => {
+      doc.text(t, x + cardPad + 6, cursorY);
+      if (idx < titleLines.length - 1) cursorY += groupTitleFont.size + 2;
     });
 
-    y += sectionGap;
-    // Si nos pasamos del límite, la próxima iteración caerá en ensureFits() → nueva columna
+    cursorY += 6; // espacio bajo título
+
+    // Separador fino
+    doc.setDrawColor(220, 224, 228);
+    doc.line(x + cardPad + 6, cursorY, x + colW - cardPad, cursorY);
+    cursorY += 8;
+
+    // Ítems
+    doc.setFont(itemFont.family, 'normal');
+    doc.setFontSize(itemFont.size);
+
+    const membersToDraw = members.length ? members : ['—'];
+    membersToDraw.forEach((m, i) => {
+      const line = members.length ? `${i + 1}. ${m || '—'}` : '—';
+      const lines = wrap(line, colW - cardPad * 2 - 6);
+      lines.forEach((ln: string | string[], j: any) => {
+        // chequeo de desborde en mitad de tarjeta (raro, pero seguro)
+        if (cursorY + itemFont.size + 2 > y + cardH - cardPad) return;
+        doc.text(ln, x + cardPad + 6, cursorY + itemFont.size);
+        cursorY += itemFont.size + 2;
+      });
+      cursorY += lineGap;
+    });
+
+    // Avanzar Y para la próxima tarjeta
+    y += cardH + sectionGap;
+
+    return cardH;
+  }
+
+  // Render de grupos
+  (groups ?? []).forEach((g) => {
+    const title = toSafeText(g.group_name || 'Grupo');
+    const members = (g.members ?? []).map((m) => (m == null || m === '' ? '—' : String(m)));
+    drawGroupCard(title, members);
   });
 
-  // Footer simple (una sola página)
-  doc.setFontSize(9);
-  doc.text(
-    `Page 1`,
-    doc.internal.pageSize.getWidth() - marginX,
-    doc.internal.pageSize.getHeight() - 24,
-    { align: 'right' }
-  );
+  // Footer con número de página
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setFont(metaFont.family, 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Page ${p}`, pageW - marginX, pageH - 20, { align: 'right' });
+  }
 
-  doc.save(`${fileBase}.pdf`);
+  // Descargar (compatible móviles)
+  const filename = `${fileBase}.pdf`;
+  const blob = doc.output('blob');
+  try {
+    saveAs(blob, filename);
+  } catch {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename; // algunos Safari lo ignoran, pero lo intentamos
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, 3000);
+  }
 }
-
 
 /* ---------- Main ---------- */
 
@@ -274,31 +378,29 @@ export default function SessionBoard({
   );
 
   const handleDownloadPdf = () => {
-  // Prioridad: si hay vista previa local -> exporta esa;
-  // si no, exporta los grupos persistidos (detail)
-  let groupsForPdf: ExportGroup[] = [];
+    // Prioridad: si hay vista previa local -> exporta esa;
+    // si no, exporta los grupos persistidos (detail)
+    let groupsForPdf: ExportGroup[] = [];
 
-  if (localGroups && localGroups.length) {
-    groupsForPdf = localGroups.map(g => ({
-      group_name: g.group_name,
-      members: g.members.map(m => m.names),
-    }));
-  } else if (detail && detail.length) {
-    groupsForPdf = detail.map(g => ({
-      group_name: g.group_name || '',
-      members: (g.members || []).map(m => m.person?.names || '—'),
-    }));
-  } else {
-    // Nada que exportar
-    groupsForPdf = [];
-  }
+    if (localGroups && localGroups.length) {
+      groupsForPdf = localGroups.map(g => ({
+        group_name: g.group_name,
+        members: g.members.map(m => m.names),
+      }));
+    } else if (detail && detail.length) {
+      groupsForPdf = detail.map(g => ({
+        group_name: g.group_name || '',
+        members: (g.members || []).map(m => m.person?.names || '—'),
+      }));
+    } else {
+      groupsForPdf = [];
+    }
 
-  exportGroupsToPDF({
-    sessionName: session.session_name,
-    groups: groupsForPdf,
-  });
-};
-
+    exportGroupsToPDF({
+      sessionName: session?.session_name ?? 'Session',
+      groups: groupsForPdf,
+    });
+  };
 
   return (
     <Modal open={true} onClose={onClose} width="max-w-5xl">
@@ -315,7 +417,6 @@ export default function SessionBoard({
             <GhostButton onClick={onClose}>Cerrar</GhostButton>
           </div>
         </div>
-
 
         {/* Loading unificado */}
         {loading && (
