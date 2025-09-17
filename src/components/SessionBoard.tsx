@@ -216,7 +216,7 @@ function exportGroupsToPDF({
     membersToDraw.forEach((m, i) => {
       const line = members.length ? `${i + 1}. ${m || '—'}` : '—';
       const lines = wrap(line, colW - cardPad * 2 - 6);
-      lines.forEach((ln: string | string[], j: any) => {
+      lines.forEach((ln: string | string[], _j: any) => {
         // chequeo de desborde en mitad de tarjeta (raro, pero seguro)
         if (cursorY + itemFont.size + 2 > y + cardH - cardPad) return;
         doc.text(ln, x + cardPad + 6, cursorY + itemFont.size);
