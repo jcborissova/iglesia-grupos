@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable no-empty */
 // src/components/SessionBoard.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-// Requiere: npm i sortablejs file-saver jspdf
+
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Sortable from 'sortablejs';
 import { Api, type Person, type Session, type GroupDetail } from '../api';
@@ -61,7 +62,7 @@ function exportGroupsToPDF({
 }: {
   sessionName: unknown;
   groups: ExportGroup[];
-}) {
+}): void {
   const safeSession = toSafeText(sessionName, 'Session');
   const fileBase = toSlug(`Groups_${safeSession}`);
 
@@ -69,11 +70,9 @@ function exportGroupsToPDF({
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
 
-  // Márgenes
+  // Márgenes y área útil
   const marginX = 40;
   const marginY = 56;
-
-  // Área útil
   const innerW = pageW - marginX * 2;
   const innerH = pageH - marginY * 2;
 
@@ -93,22 +92,25 @@ function exportGroupsToPDF({
   const sectionGap = 10;
   const cardRadius = 6;
 
-  // Encabezado con barra de color
-  doc.setFillColor(30, 64, 175); // azul
-  doc.rect(0, 0, pageW, headerBarH, 'F');
+  const drawHeader = () => {
+    doc.setFillColor(30, 64, 175); // azul
+    doc.rect(0, 0, pageW, headerBarH, 'F');
 
-  doc.setFont(titleFont.family, 'bold');
-  doc.setFontSize(titleFont.size);
-  doc.setTextColor(255, 255, 255);
-  doc.text(`Sesión: ${safeSession}`, marginX, headerBarH / 2 + 4, { baseline: 'middle' });
+    doc.setFont(titleFont.family, 'bold');
+    doc.setFontSize(titleFont.size);
+    doc.setTextColor(255, 255, 255);
+    doc.text(`Sesión: ${safeSession}`, marginX, headerBarH / 2 + 4, { baseline: 'middle' });
 
-  doc.setFont(metaFont.family, 'normal');
-  doc.setFontSize(metaFont.size);
-  doc.setTextColor(230, 230, 230);
-  doc.text(`Exportado: ${new Date().toLocaleString()}`, pageW - marginX, headerBarH / 2 + 4, {
-    align: 'right',
-    baseline: 'middle',
-  });
+    doc.setFont(metaFont.family, 'normal');
+    doc.setFontSize(metaFont.size);
+    doc.setTextColor(230, 230, 230);
+    doc.text(`Exportado: ${new Date().toLocaleString()}`, pageW - marginX, headerBarH / 2 + 4, {
+      align: 'right',
+      baseline: 'middle',
+    });
+  };
+
+  drawHeader();
 
   // Posición inicial (debajo del encabezado visual)
   const topY = marginY;
@@ -123,22 +125,8 @@ function exportGroupsToPDF({
     x = marginX + col * (colW + GUTTER);
     y = topY;
     if (col >= COLS) {
-      // Nueva página si se acaban las columnas
       doc.addPage();
-      // Repetir encabezado en cada página
-      doc.setFillColor(30, 64, 175);
-      doc.rect(0, 0, pageW, headerBarH, 'F');
-      doc.setFont(titleFont.family, 'bold');
-      doc.setFontSize(titleFont.size);
-      doc.setTextColor(255, 255, 255);
-      doc.text(`Sesión: ${safeSession}`, marginX, headerBarH / 2 + 4, { baseline: 'middle' });
-      doc.setFont(metaFont.family, 'normal');
-      doc.setFontSize(metaFont.size);
-      doc.setTextColor(230, 230, 230);
-      doc.text(`Exportado: ${new Date().toLocaleString()}`, pageW - marginX, headerBarH / 2 + 4, {
-        align: 'right',
-        baseline: 'middle',
-      });
+      drawHeader();
       col = 0;
       x = marginX;
       y = topY;
@@ -146,42 +134,30 @@ function exportGroupsToPDF({
   };
 
   /** Envuelve texto para un ancho */
-  const wrap = (text: string, width: number) => {
-    return doc.splitTextToSize(text, width);
-  };
+  const wrap = (text: string, width: number) => doc.splitTextToSize(text, width);
 
   /** Calcula alto de una "tarjeta" de grupo */
   function measureCardHeight(title: string, members: string[]) {
-    // Título
     const titleLines = wrap(title, colW - cardPad * 2);
     const titleH = groupTitleFont.size + lineGap + (titleLines.length - 1) * (groupTitleFont.size + 2);
 
-    // Ítems
     let itemsH = 0;
-    members.forEach((m, i) => {
-      const line = `${i + 1}. ${m || '—'}`;
+    const list = members.length ? members : ['—'];
+    list.forEach((m, i) => {
+      const line = members.length ? `${i + 1}. ${m || '—'}` : '—';
       const lines = wrap(line, colW - cardPad * 2);
       itemsH += itemFont.size + (lines.length - 1) * (itemFont.size + 2) + lineGap;
     });
-    if (members.length === 0) {
-      const lines = wrap('—', colW - cardPad * 2);
-      itemsH += itemFont.size + (lines.length - 1) * (itemFont.size + 2) + lineGap;
-    }
 
-    const cardH = cardPad + titleH + 4 + itemsH + cardPad;
-    return cardH;
+    return cardPad + titleH + 4 + itemsH + cardPad;
   }
 
-  /** Dibuja una tarjeta de grupo en (x, y). Devuelve alto usado. */
+  /** Dibuja una tarjeta de grupo en (x, y). Avanza el cursor. */
   function drawGroupCard(title: string, members: string[]) {
     const cardH = measureCardHeight(title, members);
+    if (y + cardH > bottomY) goNextColumn();
 
-    // Si no cabe, pasar a la siguiente columna/página
-    if (y + cardH > bottomY) {
-      goNextColumn();
-    }
-
-    // Sombra suave (simulada)
+    // Tarjeta
     doc.setDrawColor(0, 0, 0);
     doc.setFillColor(245, 247, 250); // fondo claro
     doc.setTextColor(33, 37, 41);
@@ -196,9 +172,9 @@ function exportGroupsToPDF({
     let cursorY = y + cardPad + groupTitleFont.size;
     doc.setFont(groupTitleFont.family, 'bold');
     doc.setFontSize(groupTitleFont.size);
-    titleLines.forEach((t: string | string[], idx: number) => {
+    titleLines.forEach((t: string | string[], i: number) => {
       doc.text(t, x + cardPad + 6, cursorY);
-      if (idx < titleLines.length - 1) cursorY += groupTitleFont.size + 2;
+      if (i < titleLines.length - 1) cursorY += groupTitleFont.size + 2;
     });
 
     cursorY += 6; // espacio bajo título
@@ -212,23 +188,19 @@ function exportGroupsToPDF({
     doc.setFont(itemFont.family, 'normal');
     doc.setFontSize(itemFont.size);
 
-    const membersToDraw = members.length ? members : ['—'];
-    membersToDraw.forEach((m, i) => {
+    const list = members.length ? members : ['—'];
+    list.forEach((m, i) => {
       const line = members.length ? `${i + 1}. ${m || '—'}` : '—';
       const lines = wrap(line, colW - cardPad * 2 - 6);
-      lines.forEach((ln: string | string[], _j: any) => {
-        // chequeo de desborde en mitad de tarjeta (raro, pero seguro)
-        if (cursorY + itemFont.size + 2 > y + cardH - cardPad) return;
-        doc.text(ln, x + cardPad + 6, cursorY + itemFont.size);
+      lines.forEach((ln: string) => {
+        if (cursorY + itemFont.size + 2 > y + cardH - cardPad) return; // seguridad
+        doc.text(ln as string, x + cardPad + 6, cursorY + itemFont.size);
         cursorY += itemFont.size + 2;
       });
       cursorY += lineGap;
     });
 
-    // Avanzar Y para la próxima tarjeta
-    y += cardH + sectionGap;
-
-    return cardH;
+    y += cardH + sectionGap; // siguiente tarjeta
   }
 
   // Render de grupos
@@ -248,16 +220,44 @@ function exportGroupsToPDF({
     doc.text(`Page ${p}`, pageW - marginX, pageH - 20, { align: 'right' });
   }
 
-  // Descargar (compatible móviles)
+  // Descargar / Compartir (función síncrona: no usamos await)
   const filename = `${fileBase}.pdf`;
   const blob = doc.output('blob');
+  const file = new File([blob], filename, { type: 'application/pdf' });
+
+  // 1) Intento de share nativo (sin await). Si falla, cae al catch -> saveAs.
   try {
+    // @ts-ignore - TS viejo puede no tipar canShare/share
+    if (navigator?.canShare?.({ files: [file] })) {
+      // @ts-ignore
+      navigator.share({ files: [file], title: filename, text: 'Grupos' }).catch(() => {
+        try {
+          saveAs(blob, filename);
+        } catch {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            a.remove();
+            URL.revokeObjectURL(url);
+          }, 3000);
+        }
+      });
+      return; // ya lanzamos el share; salimos
+    }
+    // 2) Fallback: descarga directa
     saveAs(blob, filename);
   } catch {
+    // 3) Último recurso: abrir en pestaña
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename; // algunos Safari lo ignoran, pero lo intentamos
+    a.target = '_blank';
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
@@ -378,8 +378,7 @@ export default function SessionBoard({
   );
 
   const handleDownloadPdf = () => {
-    // Prioridad: si hay vista previa local -> exporta esa;
-    // si no, exporta los grupos persistidos (detail)
+    // Si hay vista previa local -> exporta esa; si no, exporta los grupos persistidos
     let groupsForPdf: ExportGroup[] = [];
 
     if (localGroups && localGroups.length) {
@@ -392,8 +391,6 @@ export default function SessionBoard({
         group_name: g.group_name || '',
         members: (g.members || []).map(m => m.person?.names || '—'),
       }));
-    } else {
-      groupsForPdf = [];
     }
 
     exportGroupsToPDF({
@@ -560,14 +557,13 @@ function TempGroupColumn({
         const oldIndex = evt.oldIndex ?? 0;
         const newIndex = evt.newIndex ?? 0;
 
-        // Si no cambió nada, salir
         if (fromGid === toGid && oldIndex === newIndex) return;
 
-        // 1) Revertimos el DOM que movió Sortable (evitamos conflicto con React)
+        // Revertimos el DOM que movió Sortable (evita conflicto con React)
         const anchor = fromEl.children[oldIndex] || null;
         try { fromEl.insertBefore(itemEl, anchor); } catch {}
 
-        // 2) Ahora sí, movemos en estado (React hará el DOM real)
+        // Movemos en estado (React hará el DOM real)
         onMove(fromGid, oldIndex, toGid, newIndex);
       },
     });
